@@ -1,0 +1,140 @@
+﻿@{
+    ViewData["Title"] = "Home Page";
+}
+
+<div class="text-center">
+    <h1 class="display-4">Welcome</h1>
+    <p>Learn about <a href="https://docs.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+</div>
+<div id="mapid" style="height: 500px;"></div>
+<canvas id="myChart" width="400px" height="100px"></canvas>
+<div id="results">
+    <h3>Results</h3>
+    <p id="ascent"></p>
+    <p id="descent"></p>
+    <p id="distance"></p>
+    <p id="time"></p>
+</div>
+
+<script type="text/javascript">var mymap = L.map('mapid').setView([25.0330, 121.5654], 13); // 使用台北的經緯度作為示例
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(mymap);</script>
+
+<script>let lastClickedData = null;
+    let pointsByIndex = [];
+
+    fetch('/Data/GetChartData')
+        .then(response => response.json())
+        .then(data => {
+            var gpxData = data;
+            console.log(gpxData)
+
+            // 使用 data 中的信息创建 Chart.js 图表
+            var ctx = document.getElementById('myChart').getContext('2d');
+            var myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.map((_, index) => index), // 仅示例，实际可能是时间或距离
+                    datasets: [{
+                        label: 'Elevation',
+                        data: data.map(pt => pt.elevation),
+
+                    }]
+                },
+                options: {
+                    tooltips: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    hover: {
+                        mode: 'nearest', // 或 'index'
+                        intersect: false  // 设置为 false 可以在鼠标接近时触发
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false
+                        }
+                    },
+                    onHover: function (event, chartElements) {
+                        if (chartElements.length > 0) {
+                            var dataIndex = chartElements[0].index;
+                            var correspondingLatLng = gpxData[dataIndex];
+                            // 调用一个函数来在地图上处理这个位置
+                            updateMapMarker(correspondingLatLng);
+                        }
+                    },
+                    onClick: function (event, chartElements) {
+                        if (chartElements.length > 0) {
+                            var dataIndex = chartElements[0].index;
+                            //var data = gpxData[dataIndex];
+
+                            pointsByIndex.push(dataIndex)
+
+                            if (pointsByIndex.length >= 2) {
+                                console.log(pointsByIndex[0], pointsByIndex[1]);
+                                sendPointsToServer(pointsByIndex)
+                                pointsByIndex.shift(); // 移除数组的第一个元素
+                                pointsByIndex[0] = dataIndex;
+                            }
+                        }
+                    }
+
+                }
+            });
+        });
+
+    fetch('/Data/GetGpxFile')
+        .then(response => response.text())
+        .then(gpxString => {
+            // 使用 leaflet-gpx 加载 GPX 数据
+            new L.GPX(gpxString, {
+                async: true,
+                marker_options: {
+                    startIconUrl: 'path/to/icons/pin-icon-start.png',
+                    endIconUrl: 'path/to/icons/pin-icon-end.png',
+                    shadowUrl: 'path/to/icons/pin-shadow.png'
+                }
+            }).on('loaded', function (e) {
+                mymap.fitBounds(e.target.getBounds());
+            }).addTo(mymap);
+        });
+
+    var mapMarker = null; // 全局变量来存储标记
+
+    function updateMapMarker(latlng) {
+        if (mapMarker) {
+            // 如果标记已存在，则更新位置
+            mapMarker.setLatLng([latlng.latitude, latlng.longitude]);
+        } else {
+            // 否则，在地图上创建新的标记
+            mapMarker = L.marker([latlng.latitude, latlng.longitude]).addTo(mymap);
+        }
+    }
+
+
+    function sendPointsToServer(points) {
+        console.log(JSON.stringify({ points: points }))
+        fetch('/Data/CalculateAscentAndDistance', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ points: points })
+        })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Total ascent and distance:', data);
+                document.getElementById('ascent').textContent = 'Total Ascent: ' + data.ascent + ' meters';
+                document.getElementById('descent').textContent = 'Total Descent: ' + data.dscent + ' meters';
+                document.getElementById('distance').textContent = 'Total Distance: ' + data.distance.toFixed(2) + ' meters';
+                document.getElementById('time').textContent = 'Total Time: ' + data.time;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+    }</script>
+
+
